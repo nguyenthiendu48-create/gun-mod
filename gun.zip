@@ -1,0 +1,173 @@
+// Mod Súng Thật + Chế Tạo Sinh Tồn cho EaglerForge
+ModAPI.require("player");
+ModAPI.require("network");
+
+ModAPI.displayToChat({ msg: "§6[Realistic Guns] §fĐã nạp! Gõ §e.craft ak47 §fhoặc §b.craft awp §fđể chế tạo." });
+ModAPI.displayToChat({ msg: "§7Điều khiển: Chuột phải = Bắn | Phím R = Nạp đạn | Shift = Ngắm" });
+
+// Công thức chế tạo hiển thị khi người chơi gõ .recipe
+const RECIPES_TEXT = [
+    "§6=== CÔNG THỨC CHẾ TẠO SÚNG ===",
+    "§e1. AK-47: §fCần §74 Thỏi Sắt (Iron Ingot) §f+ §c2 Đá Đỏ (Redstone) §f-> Gõ: §a.craft ak47",
+    "§b2. AWP:   §fCần §b3 Kim Cương (Diamond) §f+ §72 Thỏi Sắt §f-> Gõ: §a.craft awp"
+];
+
+// Cấu hình thông số từng loại súng
+const GUNS = {
+    292: { // Iron Hoe -> AK-47
+        name: "AK-47",
+        maxAmmo: 30,
+        ammo: 30,
+        fireRate: 3,
+        damage: 7,
+        recoil: 1.8,
+        reloadTime: 40,
+        soundPitch: 1.4
+    },
+    293: { // Diamond Hoe -> AWP Sniper
+        name: "AWP",
+        maxAmmo: 5,
+        ammo: 5,
+        fireRate: 25,
+        damage: 25,
+        recoil: 5.5,
+        reloadTime: 60,
+        soundPitch: 0.7
+    }
+};
+
+let cooldown = 0;
+let reloadTimer = 0;
+let isReloading = false;
+
+// Lắng nghe lệnh chat để chế tạo súng (.recipe, .craft ak47, .craft awp)
+ModAPI.addEventListener("sendchatmessage", (event) => {
+    const msg = event.message.trim().toLowerCase();
+
+    if (msg === ".recipe" || msg === ".congthuc") {
+        event.preventDefault = true; // Ẩn lệnh khỏi khung chat chung
+        RECIPES_TEXT.forEach(line => ModAPI.displayToChat({ msg: line }));
+    } 
+    else if (msg === ".craft ak47") {
+        event.preventDefault = true;
+        craftGun("ak47");
+    } 
+    else if (msg === ".craft awp") {
+        event.preventDefault = true;
+        craftGun("awp");
+    }
+});
+
+// Hàm kiểm tra nguyên liệu trong túi và trao súng
+function craftGun(type) {
+    const inv = ModAPI.player.inventory.mainInventory;
+    
+    if (type === "ak47") {
+        // Kiểm tra 4 Sắt (ID 265) và 2 Redstone (ID 331)
+        if (countItem(inv, 265) >= 4 && countItem(inv, 331) >= 2) {
+            ModAPI.network.sendPacketChatMessage({ message: "/clear @p minecraft:iron_ingot 0 4" });
+            ModAPI.network.sendPacketChatMessage({ message: "/clear @p minecraft:redstone 0 2" });
+            ModAPI.network.sendPacketChatMessage({ message: '/give @p minecraft:iron_hoe 1 0 {display:{Name:"§6Súng Trường AK-47"}}' });
+            ModAPI.displayToChat({ msg: "§a[Chế Tạo] Thành công! Bạn đã nhận được §6AK-47§a." });
+            ModAPI.player.playSound({ name: "random.anvil_use", volume: 1.0, pitch: 1.2 });
+        } else {
+            ModAPI.displayToChat({ msg: "§c[Thiếu nguyên liệu] Cần 4 Thỏi Sắt và 2 Đá Đỏ để chế tạo AK-47!" });
+        }
+    } 
+    else if (type === "awp") {
+        // Kiểm tra 3 Kim Cương (ID 264) và 2 Sắt (ID 265)
+        if (countItem(inv, 264) >= 3 && countItem(inv, 265) >= 2) {
+            ModAPI.network.sendPacketChatMessage({ message: "/clear @p minecraft:diamond 0 3" });
+            ModAPI.network.sendPacketChatMessage({ message: "/clear @p minecraft:iron_ingot 0 2" });
+            ModAPI.network.sendPacketChatMessage({ message: '/give @p minecraft:diamond_hoe 1 0 {display:{Name:"§bSúng Bắn Tỉa AWP"}}' });
+            ModAPI.displayToChat({ msg: "§a[Chế Tạo] Thành công! Bạn đã nhận được §bAWP§a." });
+            ModAPI.player.playSound({ name: "random.anvil_use", volume: 1.0, pitch: 1.0 });
+        } else {
+            ModAPI.displayToChat({ msg: "§c[Thiếu nguyên liệu] Cần 3 Kim Cương và 2 Thỏi Sắt để chế tạo AWP!" });
+        }
+    }
+}
+
+// Hàm đếm số lượng vật phẩm trong túi đồ người chơi
+function countItem(inventory, targetId) {
+    let total = 0;
+    for (let i = 0; i < inventory.length; i++) {
+        if (inventory[i] && inventory[i].itemId === targetId) {
+            total += inventory[i].stackSize;
+        }
+    }
+    return total;
+}
+
+// Lắng nghe phím R để nạp đạn
+window.addEventListener("keydown", (e) => {
+    if (e.keyCode === 82 && !isReloading) {
+        const held = ModAPI.player.getHeldItem();
+        if (held && GUNS[held.itemId]) {
+            const gun = GUNS[held.itemId];
+            if (gun.ammo < gun.maxAmmo) {
+                isReloading = true;
+                reloadTimer = gun.reloadTime;
+                ModAPI.displayToChat({ msg: `§e[${gun.name}] Đang thay băng đạn...` });
+                ModAPI.player.playSound({ name: "random.click", volume: 1.0, pitch: 0.8 });
+            }
+        }
+    }
+});
+
+// Vòng lặp xử lý bắn và nạp đạn
+ModAPI.addEventListener("update", () => {
+    if (cooldown > 0) cooldown--;
+
+    const held = ModAPI.player.getHeldItem();
+    if (!held || !GUNS[held.itemId]) {
+        isReloading = false;
+        return;
+    }
+
+    const gun = GUNS[held.itemId];
+
+    if (isReloading) {
+        reloadTimer--;
+        if (reloadTimer <= 0) {
+            gun.ammo = gun.maxAmmo;
+            isReloading = false;
+            ModAPI.displayToChat({ msg: `§a[${gun.name}] Đã nạp đầy đạn (${gun.ammo}/${gun.maxAmmo})!` });
+            ModAPI.player.playSound({ name: "random.orb", volume: 0.8, pitch: 1.5 });
+        }
+        return;
+    }
+
+    if (ModAPI.minecraft.gameSettings.keyBindUseItem.pressed && cooldown === 0) {
+        if (gun.ammo > 0) {
+            fireWeapon(gun);
+            gun.ammo--;
+            cooldown = gun.fireRate;
+            ModAPI.displayToChat({ msg: `§f[${gun.name}] Đạn còn lại: §c${gun.ammo}§f/${gun.maxAmmo}` });
+        } else {
+            ModAPI.displayToChat({ msg: `§c[${gun.name}] Hết đạn! Bấm phím R để nạp lại.` });
+            ModAPI.player.playSound({ name: "random.click", volume: 1.0, pitch: 2.0 });
+            cooldown = 15;
+        }
+    }
+});
+
+function fireWeapon(gun) {
+    ModAPI.player.playSound({ name: "random.explode", volume: 0.8, pitch: gun.soundPitch });
+
+    const isSneaking = ModAPI.player.isSneaking();
+    const actualRecoil = isSneaking ? gun.recoil * 0.4 : gun.recoil;
+    ModAPI.player.rotationPitch -= actualRecoil;
+
+    const yaw = ModAPI.player.rotationYaw * (Math.PI / 180);
+    const pitch = ModAPI.player.rotationPitch * (Math.PI / 180);
+    const speed = 6.0;
+
+    const motionX = -Math.sin(yaw) * Math.cos(pitch) * speed;
+    const motionY = -Math.sin(pitch) * speed;
+    const motionZ = Math.cos(yaw) * Math.cos(pitch) * speed;
+
+    ModAPI.network.sendPacketChatMessage({
+        message: `/summon Arrow ~ ~1.5 ~ {Motion:[${motionX.toFixed(2)},${motionY.toFixed(2)},${motionZ.toFixed(2)}],damage:${gun.damage},pickup:0}`
+    });
+}
